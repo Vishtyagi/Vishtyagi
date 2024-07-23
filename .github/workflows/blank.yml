@@ -1,6 +1,0 @@
-name: 'Lambda CI'
-run-name: 'Functions Build #${{ github.run_number }} - PR: ${{ github.event.pull_request.title }}'
-
-on:
-  pull_request:
-    types: [opened, synchronize, reopened]
