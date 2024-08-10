@@ -1,0 +1,36 @@
+mode: Mainline
+branches:
+  main:
+    regex: ^main$
+    tag: useBranchName
+    increment: None
+    is-release-branch: false
+    is-mainline: true
+  feature:
+    regex: ^feature?[/-]
+    tag: feature-{BranchName}
+    increment: None
+    source-branches: ['main']
+    is-release-branch: false
+    is-mainline: false
+  release:
+    regex: ^release?[/-]
+    tag: ''
+    increment: Patch
+    source-branches: ['main']
+    is-release-branch: true
+    is-mainline: true
+  hotfix:
+    regex: ^hotfix?[/-] | ^bugfix?[/-] | ^fix?[/-]
+    tag: useBranchName
+    increment: Patch
+    source-branches: ['main','release']
+    is-release-branch: false
+    is-mainline: false
+  dependabot:
+    regex: ^dependabot?[/-]
+    tag: useBranchName
+    increment: Patch
+    source-branches: [ 'main' ]
+    is-release-branch: false
+    is-mainline: false
