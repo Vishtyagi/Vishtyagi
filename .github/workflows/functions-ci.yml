@@ -1,0 +1,64 @@
+name: 'Lambda CI'
+run-name: 'Functions Build #${{ github.run_number }} - PR: ${{ github.event.pull_request.title }}'
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+env:
+  nuspec-filename: easyJet.eResConnect.ejPlus.nuspec
+  version: '1.0.${{ github.run_number }}'
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+  issues: write
+  checks: write
+  actions: read
+  security-events: write
+
+jobs:
+  BuildTestPublish:
+    name: 'Build, Test, and Publish NuGet Package'
+    runs-on: easyjet-dev-tmp
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup dotnet
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0
+
+      - name: Setup NuGet
+        uses: NuGet/setup-nuget@v1.2
+
+      - name: Build
+        run: dotnet build
+        working-directory: 'src'
+
+      - name: Publish artifact
+        run: |
+          cd 'src/easyJet.eResConnect.CIAM.SendMemberUpdateToForgeRock.Lambda'
+          dotnet publish -c Release -o bin/Release/net8.0/linux-arm64/publish
+
+      - name: Install zip
+        run: choco install -y zip
+
+      - name: Create ZIP Archive
+        run: |
+          cd 'easyJet.eResConnect.CIAM.SendMemberUpdateToForgeRock.Lambda/bin/Release/net8.0/linux-arm64/publish'
+          zip -r easyJet.eResConnect.CIAM.SendMemberUpdateToForgeRock.Lambda.zip .
+
+      - name: Set up AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-region: ${{ vars.AWS_REGION }}
+          role-to-assume: ${{ vars.ROLE_FOR_OIDC }}
+          role-session-name: ${{ vars.ROLE_SESSION_NAME }}
+
+      - name: Upload ZIP Archive to S3
+        run: |
+          aws s3 cp src/easyJet.eResConnect.CIAM.SendMemberUpdateToForgeRock.Lambda/bin/Release/net8.0/linux-arm64/publish/easyJet.eResConnect.CIAM.SendMemberUpdateToForgeRock.Lambda.zip ${{ vars.S3_BUCKET_PATH_FOR_ZIP_UPLOAD }}

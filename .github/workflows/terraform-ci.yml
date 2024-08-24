@@ -1,0 +1,83 @@
+name: 'Terraform CI'
+run-name: 'Terraform Build #${{ github.run_number }} - ${{ github.event.head_commit.message }}'
+
+on:
+  pull_request:
+  push:
+    paths:
+      - 'terraform/functions/**'
+      - '.github/workflows/terraform-ci.yml'
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+  issues: write
+  checks: write
+  actions: read
+  security-events: write
+
+jobs:
+  Setup:
+    runs-on: ubuntu-latest
+    outputs:
+      working-directories: ${{ steps.get-directories.outputs.terraformDirectories }}
+      environment: dev
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - uses: easyjet-dev/changed-files@v1
+        id: changed-files
+        with:
+          dir_names: true
+          files: '**/*.tf'
+          files_ignore: '**/*module*/**'
+
+      - name: Get functions
+        id: get-directories
+        shell: pwsh
+        run: |
+          Write-Host "Changed Files: ${{ steps.changed-files.outputs.all_changed_files }}"
+          $directories = "${{ steps.changed-files.outputs.all_changed_files }}".Trim()
+          $terraformDirectories = @()
+          foreach ($directory in $directories.Split(' ')){
+            $name = $directory.Replace("/infrastructure", "")
+            $terraformDirectories += @{
+              name=$name
+              path=$directory
+            }
+          }
+          $terraformDirectoriesCompressed = ConvertTo-Json -Compress -InputObject @($terraformDirectories)
+          write-host "$terraformDirectoriesCompressed"
+          "terraformDirectories=$terraformDirectoriesCompressed" >> $env:GITHUB_OUTPUT
+
+      - name: output
+        shell: pwsh
+        run: |
+          write-host 'json: ${{ steps.get-directories.outputs.terraformDirectories }}'
+
+  TerraformCI:
+    name: Terraform CI - ${{ matrix.working-directory.name }}
+    uses: easyjet-dev/reusable-workflows/.github/workflows/terraform-ci-using-oidc.yml@v2
+    needs: [Setup]
+    strategy:
+      max-parallel: 5
+      fail-fast: false
+      matrix:
+        working-directory: ${{ fromJson(needs.Setup.outputs.working-directories) }}
+    with:
+      tf_version: '1.6'
+      environment: '${{ needs.Setup.outputs.environment }}'
+      checkov_skip_checks: 'CKV_TF_1'
+      enable_validation_gate: false
+      tf_working_directory: '${{ matrix.working-directory.path }}'
+      tf_workspace: '${{ needs.Setup.outputs.environment }}'
+      tfstate_workspace_key_prefix: '${{ github.event.repository.name }}'
+      tfstate_dynamodb_table: 'tf-locks--commercial-systems'
+      tfstate_key: '${{ matrix.working-directory.name }}/infrastructure.tfstate'
+      test_report_prefix: '${{ matrix.working-directory.name }}'
+      test_terraform_plan_enabled: false
+      publish_plan_to_pr: false
+      additional_tfvars: -var-file=../../input-vars/common.tfvars -var-file=../../input-vars/${{ inputs.environment }}.tfvars -var-file=./input-vars/common.tfvars -var-file=./input-vars/${{ inputs.environment }}.tfvars -var=''tag_git_source=${{github.server_url}}/${{github.repository}}'' -var=''tag_git_sha=${{github.sha}}'' -var=''tag_git_branch=${{github.ref_name}}'' -var=''lambda_package_version=${{needs.GitVersion.outputs.package_version}}
+    secrets: inherit

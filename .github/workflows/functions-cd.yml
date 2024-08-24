@@ -1,0 +1,104 @@
+name: 'Lambda CD'
+run-name: ${{ inputs.destroy_enabled != true && 'Add' || 'Delete' }} ${{ inputs.function_to_deploy }} Lambda Code in S3
+
+on:
+  workflow_dispatch:
+    inputs:
+      destroy_enabled:
+        required: true
+        type: boolean
+        description: 'Select to remove Lambda code from S3'
+        default: false
+      function_to_deploy:
+        required: false
+        type: choice
+        description: 'Select Lambda to deploy:'
+        options:
+          - All
+          - SendMemberUpdateToForgeRockLambda
+          
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+  issues: write
+  checks: write
+  actions: read
+  security-events: write
+
+jobs:
+  Setup:
+    runs-on: ubuntu-latest
+    outputs:
+      working-directories: ${{ steps.get-directories.outputs.directories }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Get functions
+        id: get-directories
+        shell: pwsh
+        run: |
+          if ("${{ inputs.function_to_deploy }}" -eq "All") {
+            $formattedDirectories = "[`'" + ((Get-Childitem -Path "terraform/functions" -Directory).Name -join "','") + "`']"
+          }
+          else {
+            $formattedDirectories = "[`'${{ inputs.function_to_deploy }}`']"
+          }
+          "directories=$formattedDirectories" >> $env:GITHUB_OUTPUT
+
+  LambdaCD:
+    name: ${{ inputs.destroy_enabled != true && 'Add' || 'Delete' }} ${{ matrix.directory }} Lambda Code in S3
+    if: ${{ inputs.destroy_enabled != true }}
+    needs: [Setup]
+    runs-on: easyjet-dev-tmp
+    strategy:
+      fail-fast: false
+      matrix:
+        directory: ${{ fromJson(needs.Setup.outputs.working-directories) }}
+    defaults:
+      run:
+        working-directory: src/easyJet.eResConnect.CIAM.SendMemberUpdateToForgeRock.${{ matrix.directory }}.Lambda
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: GitVersion
+        id: gitversion
+        uses: easyjet-dev/reusable-workflows/.github/actions/git-version@v1.4.4
+        with:
+          git-tool-latest: true
+          use-config-file: true
+      - name: Setup dotnet
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0
+
+      - name: Setup NuGet
+        uses: NuGet/setup-nuget@v1.2
+
+      - name: Build
+        run: dotnet build
+        working-directory: 'src'
+
+      - name: Set up AWS credentials
+        uses: easyjet-dev/reusable-workflows/.github/actions/configure-aws-credentials@v2
+        with:
+          aws-region: ${{ vars.AWS_REGION }}
+          role-to-assume: ${{ vars.ROLE_TO_ASSUME_FOR_SHARED_S3 }}
+          role-to-assume-for-oidc: '${{ vars.ROLE_TO_ASSUME_FOR_OIDC_SHARED }}'
+          role-session-name: 'S3Access'
+
+      - name: Publish ${{ matrix.directory }}.Lambda
+        uses: easyjet-dev/reusable-workflows/.github/actions/dotnet-publish-lambda@feature/tap-524-PLayerPLambdaRA
+        with:
+          publish-with-layer: false
+          configuration: Release
+          self-contained: false
+          framework: net8.0
+          runtime: linux-arm64
+          upload-to-s3: true
+          package-name: eResConnect.CIAM.SendMemberUpdateToForgeRock.${{ matrix.directory }}.Lambda-${{steps.gitversion.outputs.EscapedBranchName}}
+          s3-lambda-publish-path: ${{ vars.SHARED_S3_BUCKET_PATH_FOR_ZIP_UPLOAD }}
+          working-directory: src/eResConnect.CIAM.SendMemberUpdateToForgeRock.${{ matrix.directory }}.Lambda
